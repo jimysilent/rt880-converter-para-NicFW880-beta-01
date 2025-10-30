@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Convertidor RT-880 → NICFW880 beta 01 (v6)</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;background:#0b0b0b;color:#eee;padding:2rem;text-align:center}
+  .card{background:#111;padding:1.2rem;border-radius:10px;max-width:980px;margin:0 auto;}
+  input[type=file]{margin:1rem 0}
+  button{background:#0a84ff;border:none;color:#fff;padding:.6rem 1rem;border-radius:8px;cursor:pointer}
+  button:hover{background:#066ed6}
+  pre{background:#0a0a0a;border:1px solid #222;padding:1rem;border-radius:8px;text-align:left;overflow:auto;max-height:360px}
+  small{color:#9aa}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h2>Convertidor RT-880 → NICFW880 beta 01 (v6)</h2>
+    <p>Preserva números y orden de canal. Activa solo los que tengan RX y TX válidos.</p>
+    <input id="fileInput" type="file" accept=".csv" />
+    <br/>
+    <button id="convertBtn">Convertir y descargar</button>
+    <p><small>Detecta columnas: Channel Number, Channel Name, RX TONE, TX TONE, AM_FM RX, TG List, Contact, etc.</small></p>
+    <pre id="output"></pre>
+  </div>
+
+<script>
+function norm(h){ return h? String(h).toLowerCase().replace(/[^a-z0-9]/g,'') : ''; }
+function findIndexAny(headersNorm, candidates){
+  for (let i=0;i<headersNorm.length;i++){
+    for (const c of candidates) if (headersNorm[i].includes(c)) return i;
+  }
+  return -1;
+}
+function splitCSVLine(line, delim) {
+  const parts = [];
+  let cur = '';
+  let inQ = false;
+  for (let i=0;i<line.length;i++){
+    const ch = line[i];
+    if (ch === '"') { inQ = !inQ; continue; }
+    if (!inQ && ch === delim) { parts.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  parts.push(cur);
+  return parts;
+}
+
+document.getElementById("convertBtn").addEventListener("click", () => {
+  const f = document.getElementById("fileInput").files[0];
+  if (!f) { alert("Selecciona un archivo CSV del RT-880 primero."); return; }
+
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const content = ev.target.result.replace(/\r\n/g,"\n");
+    if (!content.trim()) { alert("Archivo vacío o corrupto."); return; }
+    const lines = content.split("\n");
+    const delim = lines[0].includes(";") ? ";" : ",";
+    const rawHeaders = splitCSVLine(lines[0], delim).map(h => h.replace(/^"|"$/g,"").trim());
+    const headersNorm = rawHeaders.map(h => norm(h));
+
+    const idxChannelNumber = findIndexAny(headersNorm, ["channelnumber","channel_num","channelnum","channel"]);
+    const idxName = findIndexAny(headersNorm, ["channelname","name","chname","channel_name"]);
+    const idxRx = findIndexAny(headersNorm, ["rxfrequency","rx","rx_freq","rxfreq"]);
+    const idxTx = findIndexAny(headersNorm, ["txfrequency","tx","tx_freq","txfreq"]);
+    const idxRxTone = findIndexAny(headersNorm, ["rxtone","rxctcss","rx_dcs","rxtones","rxtonc","rxtoncoded"]);
+    const idxTxTone = findIndexAny(headersNorm, ["txtone","txctcss","tx_dcs","txtones","txtonc","txtoncoded"]);
+    const idxPower = findIndexAny(headersNorm, ["power","txpower","tx_power"]);
+    const idxMode = findIndexAny(headersNorm, ["amfmrx","amfm","mode","modulation","mod"]);
+    const idxGroup = findIndexAny(headersNorm, ["tglist","tg","group","contact","contacts","tg_list"]);
+    const idxBandwidth = findIndexAny(headersNorm, ["bandwidth","bandwidthkhz","bandwidth(khz)","bandwidthkhz"]);
+    const idxChannelType = findIndexAny(headersNorm, ["channeltype","type","chtype"]);
+
+    const outHeaders = ["Channel_Num","Active","Name","RX","TX","RX_Tone","TX_Tone","TX_Power","Slot1","Slot2","Slot3","Slot4","Bandwidth","Modulation","BusyLock","Reversed","PTTID","Clarifier","Scrambler"];
+    const outRows = [outHeaders.join(",")];
+
+    for (let i=1;i<lines.length;i++){
+      const rawLine = lines[i];
+      if (!rawLine || !rawLine.trim()) continue;
+      const parts = splitCSVLine(rawLine, delim).map(p => p.trim().replace(/^"|"$/g,""));
+
+      const origChannelNum = (idxChannelNumber >= 0 && idxChannelNumber < parts.length) ? parts[idxChannelNumber].trim() : "";
+      const nameRaw = (idxName >= 0 && idxName < parts.length) ? parts[idxName].trim() : "";
+      const rxRaw = (idxRx >= 0 && idxRx < parts.length) ? parts[idxRx].trim() : "";
+      const txRaw = (idxTx >= 0 && idxTx < parts.length) ? parts[idxTx].trim() : "";
+      const rxToneRaw = (idxRxTone >= 0 && idxRxTone < parts.length) ? parts[idxRxTone].trim() : "";
+      const txToneRaw = (idxTxTone >= 0 && idxTxTone < parts.length) ? parts[idxTxTone].trim() : "";
+      const powerRaw = (idxPower >= 0 && idxPower < parts.length) ? parts[idxPower].trim() : "";
+      const modeRaw = (idxMode >= 0 && idxMode < parts.length) ? parts[idxMode].trim() : "";
+      const groupRaw = (idxGroup >= 0 && idxGroup < parts.length) ? parts[idxGroup].trim() : "";
+      const bwRaw = (idxBandwidth >= 0 && idxBandwidth < parts.length) ? parts[idxBandwidth].trim() : "";
+      const chTypeRaw = (idxChannelType >= 0 && idxChannelType < parts.length) ? parts[idxChannelType].trim() : "";
+
+      const rxClean = rxRaw; // conservar tal cual
+      const txClean = txRaw; // conservar tal cual
+
+      const rxNum = parseFloat(rxClean) || 0;
+      const txNum = parseFloat(txClean) || 0;
+
+      const channelNumOut = origChannelNum ? origChannelNum : String(i);
+
+      // Active = True solo si RX y TX > 0
+      const active = (rxNum > 0 && txNum > 0) ? "True" : "False";
+
+      let nameOut = nameRaw;
+      if (!nameOut) {
+        if (chTypeRaw && chTypeRaw.toLowerCase() !== "analogue") nameOut = chTypeRaw + "_" + (rxClean || channelNumOut);
+        else nameOut = "CH_" + channelNumOut;
+      }
+      if (nameOut.toLowerCase() === "analogue") {
+        nameOut = (chTypeRaw && chTypeRaw.toLowerCase() !== "analogue") ? chTypeRaw : "CH_" + channelNumOut;
+      }
+
+      let modulationOut = "";
+      if (modeRaw) {
+        const m = modeRaw.toUpperCase();
+        if (m.includes("AM")) modulationOut = "AM";
+        else if (m.includes("FM")) modulationOut = "FM";
+        else if (m.includes("USB")) modulationOut = "USB";
+        else if (m.includes("LSB")) modulationOut = "LSB";
+        else modulationOut = m;
+      } else {
+        modulationOut = "AUTO";
+      }
+
+      const bandwidthOut = bwRaw ? bwRaw.replace(/[^0-9.]/g,"") : "Auto";
+      const rxToneOut = rxToneRaw ? rxToneRaw : "None";
+      const txToneOut = txToneRaw ? txToneRaw : "None";
+      const txPowerOut = powerRaw ? powerRaw : "N/T";
+      const slot1Out = groupRaw ? groupRaw : "";
+
+      const outRow = [
+        channelNumOut,
+        active,
+        `"${nameOut.replace(/"/g,'""')}"`,
+        rxClean || "",
+        txClean || "",
+        rxToneOut,
+        txToneOut,
+        txPowerOut,
+        `"${slot1Out.replace(/"/g,'""')}"`,
+        "", "", "",
+        bandwidthOut,
+        modulationOut,
+        "False","False","Off","0.00","Off"
+      ];
+
+      outRows.push(outRow.join(","));
+    }
+
+    const csvText = outRows.join("\n");
+    document.getElementById("output").textContent = csvText.split("\n").slice(0,30).join("\n") + "\n...\n(" + (outRows.length-1) + " filas)";
+    const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "radtel_rt880_to_nicfw880_v6.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  reader.readAsText(f,"utf-8");
+});
+</script>
+</body>
+</html>
